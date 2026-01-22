@@ -2,17 +2,12 @@ from datetime import datetime, timedelta
 from vvspy import get_trip
 from vvspy.models import Trip
 import logging
-import time
-from dotenv import load_dotenv
 import os
 import google.genai as genai
 from http.server import BaseHTTPRequestHandler
 import json
 
-load_dotenv()
-
 gemini_api_key = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=gemini_api_key)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("vvspy")
@@ -23,6 +18,11 @@ PROMPT_TEMPLATE = """Analyze this Stuttgart trip data and give a brief route rec
 PREFERENCES:
 1. U6 from Pragfriedhof to Feuerbach, then S-Bahn from Feuerbach to Weilimdorf
 2. If Feuerbach has issues: U-Bahn to Hauptbahnhof, then train to Weilimdorf
+
+IMPORTANT DECISION RULES:
+- First look for trips matching preference 1 with NO issues or delays
+- If preference 1 trips exist but have delays, recommend them and state the delay amount
+- Only suggest alternatives if preference 1 trips are canceled or unavailable
 
 TRIP DATA:
 {trip_data}
@@ -37,17 +37,13 @@ Keep it extremely concise for voice assistant output."""
 
 
 def get_commute_data():
-    """Fetch and analyze commute data"""
+    """Fetch and analyze commute data from 7:00 to 8:30"""
     output = []
 
-    start_time = time.time()
-    trip: Trip = get_trip('de:08111:115', 'de:08111:2270')
-    end_time = time.time()
-    output.append(f"Trip retrieval execution time: {end_time - start_time:.2f} seconds\n")
-
-    start_time = time.time()
     today = datetime.now().date()
-    departure_times = [datetime.combine(today, datetime.strptime("07:45", "%H:%M").time()) + timedelta(minutes=i*5) for i in range(int((9*60 - 7*60 - 45) / 5) + 1)]
+    # Generate departure times from 7:00 to 8:30, every 5 minutes
+    departure_times = [datetime.combine(today, datetime.strptime("07:00", "%H:%M").time(
+    )) + timedelta(minutes=i*5) for i in range(int((8*60 + 30 - 7*60) / 5) + 1)]
 
     for dep_time in departure_times:
         try:
@@ -80,37 +76,49 @@ def get_commute_data():
                     output.append(f"    Infos: None\n")
                 output.append(f"    Path Description: {connection.path_description}\n")
 
-        except (IndexError, TypeError):
-            output.append(f"Departure at {dep_time.strftime('%H:%M')} - No trips found\n")
-
-    end_time = time.time()
-    output.append(f"Connections processing execution time: {end_time - start_time:.2f} seconds\n")
+        except (IndexError, TypeError) as e:
+            output.append(
+                f"Departure at {dep_time.strftime('%H:%M')} - No trips found: {e}\n")
 
     unified_output = "".join(output)
 
-    prompt = PROMPT_TEMPLATE.format(trip_data=unified_output)
-    response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+    if not unified_output or "No trips found" in unified_output:
+        raise Exception("No trips available in the next 30 minutes")
 
-    return {
-        "trip_data": unified_output,
-        "recommendation": response.text
-    }
+    return unified_output
 
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         try:
-            result = get_commute_data()
+            if not gemini_api_key:
+                raise ValueError("GEMINI_API_KEY not configured")
+
+            trip_data = get_commute_data()
+
+            client = genai.Client(api_key=gemini_api_key)
+            prompt = PROMPT_TEMPLATE.format(trip_data=trip_data)
+            response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(json.dumps(result).encode())
+            self.wfile.write(json.dumps({
+                "trip_data": trip_data,
+                "recommendation": response.text
+            }).encode())
+
         except Exception as e:
+            logger.error(f"Error processing request: {str(e)}")
             self.send_response(500)
             self.send_header("Content-type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
+            self.wfile.write(json.dumps({
+                "error": "Sorry, something went wrong with the transit data service. Please try again later.",
+                "details": str(e)
+            }).encode())
 
     def do_OPTIONS(self):
         self.send_response(200)
