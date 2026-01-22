@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env.local
+node_modules
+*.pyc
+__pycache__
+.pytest_cache
+.venv
+venv
+output.txt

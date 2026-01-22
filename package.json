@@ -1,0 +1,21 @@
+{
+  "name": "vvs-commute-planner",
+  "version": "1.0.0",
+  "description": "AI-powered VVS commute planner using Gemini API",
+  "main": "api/index.py",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "keywords": [
+    "vvs",
+    "commute",
+    "gemini",
+    "alexa"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": "18.x"
+  }
+}
