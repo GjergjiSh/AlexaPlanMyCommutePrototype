@@ -2,7 +2,7 @@
   "buildCommand": "pip install -r requirements.txt",
   "functions": {
     "api/index.py": {
-      "runtime": "python3.10",
+      "runtime": "python3.9",
       "memory": 2048,
       "maxDuration": 60
     }
